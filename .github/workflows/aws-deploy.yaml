@@ -20,34 +20,94 @@ jobs:
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Run deployment on EC2
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           ssh -i ~/.ssh/ec2.pem \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" << 'EOF'
-      
+            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
+            "GH_PAT='$GH_PAT' bash -s" << 'EOF'
+
+            set -e
+
+            echo "=========================================="
             echo "Connected to EC2"
-      
+            echo "=========================================="
+
             hostname
             whoami
-      
-            cd /home/ubuntu/deployment
-      
-            git pull
-      
-            echo "Hello World, I am running in AWS VM"
-      
-            echo "Applying Kubernetes manifests..."
-      
-            cd k8s
-      
+
+            DEPLOY_DIR="/home/ubuntu/deployment"
+            REPO="https://github.com/JitenPalaparthi/bmw-java-demo-k8s-deployment.git"
+
+            echo "=========================================="
+            echo "Updating deployment repository"
+            echo "=========================================="
+
+            if [ -d "$DEPLOY_DIR/.git" ]; then
+
+              echo "Repository exists. Pulling latest code..."
+
+              cd "$DEPLOY_DIR"
+
+              git remote set-url origin \
+                "https://JitenPalaparthi:${GH_PAT}@github.com/JitenPalaparthi/bmw-java-demo-k8s-deployment.git"
+
+              git fetch origin
+
+              git reset --hard origin/main
+
+            else
+
+              echo "Repository not found. Cloning..."
+
+              rm -rf "$DEPLOY_DIR"
+
+              git clone \
+                "https://JitenPalaparthi:${GH_PAT}@github.com/JitenPalaparthi/bmw-java-demo-k8s-deployment.git" \
+                "$DEPLOY_DIR"
+
+              cd "$DEPLOY_DIR"
+
+            fi
+
+            echo "=========================================="
+            echo "Repository updated"
+            echo "=========================================="
+
+            git log -1 --oneline
+
+            echo "=========================================="
+            echo "Checking Kubernetes"
+            echo "=========================================="
+
+            kubectl get nodes
+
+            echo "=========================================="
+            echo "Creating namespace"
+            echo "=========================================="
+
+            kubectl create namespace java-demo \
+              --dry-run=client \
+              -o yaml | kubectl apply -f -
+
+            echo "=========================================="
+            echo "Deploying manifests"
+            echo "=========================================="
+
+            cd "$DEPLOY_DIR/k8s"
+
             find . -maxdepth 1 -type f \
               \( -name "*.yaml" -o -name "*.yml" \) \
               ! -name "kustomization.yaml" \
+              -print \
               -exec kubectl apply -f {} -n java-demo \;
-      
-            echo "Deployment completed"
-      
-            kubectl get pods -n java-demo
+
+            echo "=========================================="
+            echo "Deployment status"
+            echo "=========================================="
+
             kubectl get deployments -n java-demo
+            kubectl get pods -n java-demo
             kubectl get services -n java-demo
-      
+
           EOF
